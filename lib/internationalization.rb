@@ -25,6 +25,7 @@ module Internationalization
 
   class << self
     attr_reader :translations
+    attr_internal_writer :config
 
     def locale
       config.locale || config.default_locale
@@ -60,7 +61,7 @@ module Internationalization
     end
 
     def enforce_available_locales!(locale)
-      if config.enforce_available_locales && !locale_available?(locale)
+      if enforce_available_locales && !locale_available?(locale)
         raise I18n::InvalidLocale.new(locale)
       end
     end
@@ -73,7 +74,7 @@ module Internationalization
     end
 
     def load_translations
-      load_path.flatten.each { |filename| load_file(filename) }
+      load_path.flatten.each {|filename| load_file(filename)}
     end
 
     def load_file(filename)
@@ -88,8 +89,28 @@ module Internationalization
       locale = locale.to_sym
       @translations ||= {}
       @translations[locale] ||= {}
-      data = data.deep_symbolize_keys
-      translations[locale].deep_merge!(data)
+      data = flatten_hash data
+      data = resolve_symbols data
+      translations[locale].merge! data
+    end
+
+    def flatten_hash(hash)
+      ret = {}
+      paths = hash.keys.map {|k| [k]}
+
+      until paths.empty?
+        path = paths.shift
+        value = hash
+        path.each {|step| value = value[step]}
+
+        if value.respond_to? :keys
+          value.keys.each {|k| paths << path + [k]}
+        else
+          ret[path.join('.')] = value
+        end
+      end
+
+      ret
     end
 
     def available_locales_set
@@ -154,60 +175,59 @@ module Internationalization
       end
     end
 
-    def lookup(locale, key, scope = [], separator: '.', **options)
-      byebug
-      keys = normalize_keys(locale, key, scope, separator)
+    def lookup(locale, key, scope = [], **options)
+      key = normalize_keys(locale, key, scope)
 
-      keys.inject(translations) do |result, _key|
-        _key = _key.to_sym
-        return nil unless result.is_a?(Hash) && result.has_key?(_key)
-        result = result[_key]
-        result = resolve(locale, _key, result, options.merge(:scope => nil)) if result.is_a?(Symbol)
-        result
+      result = translations[locale][key]
+      result = resolve(locale, key, result, options.merge(scope: nil))
+      result
+    end
+
+    def normalize_keys(locale, key, scope)
+      if !scope || scope.empty?
+        normalize_key(key)
+      else
+        [normalize_key(scope), normalize_key(key)].join('.')
       end
     end
 
-    def normalize_keys(locale, key, scope, separator = '.')
-      keys = []
-      keys.concat normalize_key(locale, separator)
-      keys.concat normalize_key(scope, separator)
-      keys.concat normalize_key(key, separator)
-      keys
-    end
-
-    def normalize_key(key, separator)
-      normalized_key_cache[separator][key] ||=
-        case key
-        when Array
-          key.map { |k| normalize_key(k, separator) }.flatten
-        else
-          keys = key.to_s.split(separator)
-          keys.delete('')
-          keys.map! { |k| k.to_sym }
-          keys
-        end
-    end
-
-    def normalized_key_cache
-      @normalized_key_cache ||= Hash.new { |h,k| h[k] = {} }
+    def normalize_key(key)
+      case key
+      when Array
+        key.join('.')
+      else
+        key.to_s
+      end
     end
 
     def resolve(locale, object, subject, options = {})
-      case subject
-      when Symbol
-        I18n.translate(subject, options.merge(locale: locale))
-      when Proc
+      if subject.is_a? Proc
         date_or_time = options.delete(:object) || object
         resolve(locale, object, subject.call(date_or_time, options))
       else
         subject
       end
     end
+
+    def resolve_symbols(hash)
+      hash.each_pair do |k, v|
+        if v.is_a? Symbol
+          hash[k] = hash[v]
+        end
+      end
+      hash = resolve_symbols hash if hash.values.any? {|v| v.is_a? Symbol}
+      hash
+    end
   end
 #   load_translations
 
   class Config; end
+
+  def @_config.respond_to_missing?(name, include_private)
+    keys.include? name
+  end
 end
 
 I18n = Internationalization
+p 'loading AS/i18n_railtie...'
 load 'active_support/i18n_railtie.rb'
