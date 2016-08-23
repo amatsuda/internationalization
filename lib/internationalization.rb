@@ -219,7 +219,6 @@ module Internationalization
       hash
     end
   end
-#   load_translations
 
   class Config; end
 
@@ -231,3 +230,5 @@ end
 I18n = Internationalization
 p 'loading AS/i18n_railtie...'
 load 'active_support/i18n_railtie.rb'
+
+I18n.load_translations
